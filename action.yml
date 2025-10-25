@@ -1,0 +1,54 @@
+name: 'Gl1tch Card Readme Stats'
+author: 'Soumojit Ash and Rishika Sharma'
+description: 'This action updates the README.md file with the latest development stats from WakaTime and GitHub Actions in an animated gif format.'
+
+inputs:
+  GH_TOKEN:
+    description: 'GitHub access token with Repo scope'
+    required: true
+    default: ${{ github.token }}
+
+  WAKATIME_API_KEY:
+    description: 'Your Wakatime API Key'
+    required: true
+
+  FIELD_BIO:
+    description: 'Your bio'
+    required: false
+
+  FIELD_EMAIL:
+    description: 'Your email'
+    required: false
+
+  FIELD_WEBSITE:
+    description: 'Your website'
+    required: false
+
+  SHOW_EDITORS:
+    required: false
+    description: 'Show the Editors used in dev metrics'
+    default: "True"
+
+  SHOW_COMMIT:
+    required: false
+    description: "Shows the number of commit graph in the dev metrics"
+    default: "True"
+
+  SHOW_LANGUAGE:
+    required: false
+    description: "Show the Coding language used in dev metrics"
+    default: "True"
+
+  SHOW_LINES_OF_CODE:
+    required: false
+    description: "Show the Total Lines of code written Badge till date"
+    default: "False"
+
+
+# runs:
+#   using: 'docker'
+
+
+branding:
+  icon: 'zap'
+  color: 'purple'
