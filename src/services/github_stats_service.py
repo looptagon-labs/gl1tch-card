@@ -1,4 +1,5 @@
 import aiohttp
+import asyncio
 from datetime import datetime
 from typing import Optional, List
 from .environment_manager_service import EnvironmentManagerService
@@ -85,14 +86,11 @@ class GitHubStatsService:
             print(f"Error parsing API response: {e}")
             return None
 
-    async def _fetch_user_data(self, session: aiohttp.ClientSession) -> dict | None:
+    async def _fetch_user_profile(self, session: aiohttp.ClientSession) -> dict | None:
         """Fetch user profile data using GitHub GraphQL API."""
         try:
-            # First, get user basic info and total repo count
-            user_query = USER_PROFILE_QUERY
-
             variables = {"username": self.username}
-            payload = {"query": user_query, "variables": variables}
+            payload = {"query": USER_PROFILE_QUERY, "variables": variables}
 
             async with session.post(
                 GITHUB_GRAPHQL_ENDPOINT,
@@ -101,15 +99,28 @@ class GitHubStatsService:
             ) as response:
                 result = await self._handle_api_response(response)
                 if result and "data" in result and result["data"]["user"]:
-                    user_data = result["data"]["user"]
-                    all_repos = await self._fetch_all_repositories(
-                        session, self.username
-                    )
-                    user_data["repositories"] = {"nodes": all_repos}
-                    return self._transform_graphql_user_data(user_data)
+                    return result["data"]["user"]
                 elif result and "errors" in result:
                     print(f"GraphQL Errors: {result['errors']}")
                 return None
+        except Exception as e:
+            print(f"Error fetching user profile: {e}")
+            return None
+
+    async def _fetch_user_data(self, session: aiohttp.ClientSession) -> dict | None:
+        """Fetch user profile data and repositories concurrently."""
+        try:
+            # Make both API calls concurrently
+            user_task = self._fetch_user_profile(session)
+            repos_task = self._fetch_all_repositories(session, self.username)
+
+            # Wait for both to complete
+            user_data, all_repos = await asyncio.gather(user_task, repos_task)
+
+            if user_data:
+                user_data["repositories"] = {"nodes": all_repos}
+                return self._transform_graphql_user_data(user_data)
+            return None
         except Exception as e:
             print(f"Error fetching user data: {e}")
             return None
