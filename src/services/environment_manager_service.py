@@ -18,6 +18,8 @@ class EnvironmentManagerService:
         "INPUT_WAKATIME_API_KEY"
     ]  # WakaTime API key for coding stats
 
+    THEME_NAME = getenv("INPUT_THEME_NAME", "Aco")  # Theme name for the card
+
     # Optional profile field configurations
     FIELD_BIO = getenv("INPUT_FIELD_BIO")  # Bio field content
     FIELD_EMAIL = getenv("INPUT_FIELD_EMAIL")  # Email field content

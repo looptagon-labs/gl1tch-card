@@ -24,6 +24,11 @@ inputs:
     description: 'Your website'
     required: false
 
+  THEME_NAME:
+    description: 'The name of the theme from https://github.com/Gogh-Co/Gogh/tree/master/themes without the yml extension'
+    required: false
+    default: 'Aco'
+
   SHOW_EDITORS:
     required: false
     description: 'Show the Editors used in dev metrics'
