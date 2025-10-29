@@ -1,509 +1,218 @@
 import aiohttp
+from typing import Dict, Any, List
+from datetime import datetime, timezone
+import json
 import asyncio
-from datetime import datetime
-from typing import Optional, List
-from .environment_manager_service import EnvironmentManagerService
-from utils.github_graphql_query import (
-    USER_PROFILE_QUERY,
-    REPOSITORIES_QUERY,
-    GITHUB_GRAPHQL_ENDPOINT,
-)
-from models.github_stats_models import (
-    GitHubStats,
-    GitHubUser,
-    RepositoryStats,
-    GitHubRepository,
-    CalculatedStats,
-    UserProfileData,
-)
+from ..utils.github_graphql_query import USER_STATS_QUERY, REPOSITORIES_PAGINATION_QUERY
 
 
 class GitHubStatsService:
-    """Service for downloading and processing GitHub user data.
+    def __init__(self, github_token: str):
+        self.github_token = github_token
+        self.graphql_url = "https://api.github.com/graphql"
 
-    This service provides methods to fetch comprehensive GitHub user statistics,
-    including profile information, repository data, and programming language
-    analysis.
-
-    Attributes:
-        github_headers (dict): Default headers for GitHub API requests
-        logger (logging.Logger): Logger instance for the service
-
-    Example:
-        >>> service = GitHubStatsService("octocat")
-        >>> stats = await service.get_github_stats()
-        >>> print(f"User has {stats.stats.total_stars} total stars")
-    """
-
-    def __init__(self, username: str, max_repos: int = 1000):
-        """Initialize the GitHub Stats Service.
-
-        Args:
-            username (str): GitHub username to fetch stats for
-            max_repos (int): Maximum number of repositories to fetch (default: 1000)
-        """
-        if not username or not isinstance(username, str):
-            raise ValueError("Username must be a non-empty string")
-
-        if max_repos <= 0:
-            raise ValueError("max_repos must be a positive integer")
-
-        self.environment_manager = EnvironmentManagerService()
-        github_token = self.environment_manager.GH_TOKEN
-
-        if github_token:
-            self.github_headers = {
-                "Accept": "application/vnd.github.v3+json",
-                "Authorization": f"token {github_token}",
-            }
-        else:
-            self.github_headers = {
-                "Accept": "application/vnd.github.v3+json",
-            }
-
-        self.username = username
-        self.max_repos = max_repos
-
-    async def _handle_api_response(
-        self, response: aiohttp.ClientResponse
-    ) -> dict | list | None:
-        """Centralized API response handling with error management."""
-        try:
-            if response.status != 200:
-                error_data = await response.json()
-                error_msg = error_data.get("message", "Unknown error")
-
-                if response.status == 403:
-                    print(f"Rate limit exceeded: {error_msg}")
-                elif response.status == 404:
-                    print(f"User not found: {error_msg}")
-                else:
-                    print(f"API error {response.status}: {error_msg}")
-
-                return None
-            return await response.json()
-        except Exception as e:
-            print(f"Error parsing API response: {e}")
-            return None
-
-    async def _fetch_user_profile(self, session: aiohttp.ClientSession) -> dict | None:
-        """Fetch user profile data using GitHub GraphQL API."""
-        try:
-            variables = {"username": self.username}
-            payload = {"query": USER_PROFILE_QUERY, "variables": variables}
-
-            async with session.post(
-                GITHUB_GRAPHQL_ENDPOINT,
-                headers=self.github_headers,
-                json=payload,
-            ) as response:
-                result = await self._handle_api_response(response)
-                if result and "data" in result and result["data"]["user"]:
-                    return result["data"]["user"]
-                elif result and "errors" in result:
-                    print(f"GraphQL Errors: {result['errors']}")
-                return None
-        except Exception as e:
-            print(f"Error fetching user profile: {e}")
-            return None
-
-    async def _fetch_user_data(self, session: aiohttp.ClientSession) -> dict | None:
-        """Fetch user profile data and repositories concurrently."""
-        try:
-            # Make both API calls concurrently
-            user_task = self._fetch_user_profile(session)
-            repos_task = self._fetch_all_repositories(session, self.username)
-
-            # Wait for both to complete
-            user_data, all_repos = await asyncio.gather(user_task, repos_task)
-
-            if user_data:
-                user_data["repositories"] = {"nodes": all_repos}
-                return self._transform_graphql_user_data(user_data)
-            return None
-        except Exception as e:
-            print(f"Error fetching user data: {e}")
-            return None
-
-    async def _fetch_all_repositories(
-        self, session: aiohttp.ClientSession, username: str
-    ) -> list:
-        """Fetch all repositories using pagination."""
-        all_repos = []
-        cursor = None
-        has_next_page = True
-        page_size = 100
-
-        while has_next_page and len(all_repos) < self.max_repos:
-            repos_query = REPOSITORIES_QUERY
-
-            variables = {"username": username, "first": page_size, "after": cursor}
-            payload = {"query": repos_query, "variables": variables}
-
-            try:
-                async with session.post(
-                    GITHUB_GRAPHQL_ENDPOINT,
-                    headers=self.github_headers,
-                    json=payload,
-                ) as response:
-                    result = await self._handle_api_response(response)
-                    if result and "data" in result and result["data"]["user"]:
-                        repos_data = result["data"]["user"]["repositories"]
-                        all_repos.extend(repos_data["nodes"])
-
-                        page_info = repos_data["pageInfo"]
-                        has_next_page = page_info["hasNextPage"]
-                        cursor = page_info["endCursor"]
-
-                        print(
-                            f"Fetched {len(repos_data['nodes'])} repos (total: {len(all_repos)})"
-                        )
-
-                        # Check if we've reached the max limit
-                        if len(all_repos) >= self.max_repos:
-                            print(f"Reached max repository limit ({self.max_repos})")
-                            break
-                    else:
-                        break
-            except Exception as e:
-                print(f"Error fetching repositories page: {e}")
-                break
-
-        print(f"Total repositories fetched: {len(all_repos)}")
-        return all_repos
-
-    def _build_github_stats_model(
-        self,
-        user_profile: UserProfileData,
-        calculated_stats: CalculatedStats,
-    ) -> GitHubStats:
-        """Build GitHubStats model from processed data."""
-
-        # Create user model
-        user = GitHubUser(
-            username=user_profile.user_data.get("login", ""),
-            name=user_profile.user_data.get("name"),
-            bio=user_profile.user_data.get("bio"),
-            location=user_profile.user_data.get("location"),
-            company=user_profile.user_data.get("company"),
-            blog=user_profile.user_data.get("blog"),
-            public_repos=user_profile.user_data.get("public_repos", 0),
-            public_gists=user_profile.user_data.get("public_gists", 0),
-            followers=user_profile.user_data.get("followers", 0),
-            following=user_profile.user_data.get("following", 0),
-            created_at=user_profile.user_data.get("created_at"),
-            avatar_url=user_profile.user_data.get("avatar_url"),
-        )
-
-        # Create repository stats model
-        stats = RepositoryStats(
-            total_stars=calculated_stats.total_stars,
-            total_forks=calculated_stats.total_forks,
-            total_issues=calculated_stats.total_issues,
-            total_pulls=calculated_stats.total_pulls,
-            total_commits=calculated_stats.total_commits,
-            public_repos=calculated_stats.public_repos,
-            public_stars=calculated_stats.public_stars,
-            public_forks=calculated_stats.public_forks,
-            public_issues=calculated_stats.public_issues,
-            public_pulls=calculated_stats.public_pulls,
-            public_commits=calculated_stats.public_commits,
-            private_repos=calculated_stats.private_repos,
-            private_stars=calculated_stats.private_stars,
-            private_forks=calculated_stats.private_forks,
-            private_issues=calculated_stats.private_issues,
-            private_pulls=calculated_stats.private_pulls,
-            private_commits=calculated_stats.private_commits,
-        )
-
-        # Create repository models
-        repo_models = []
-        for repo in user_profile.repositories:
-            repo_model = GitHubRepository(
-                name=repo.get("name", ""),
-                is_private=repo.get("isPrivate", False),
-                stargazer_count=repo.get("stargazerCount", 0),
-                fork_count=repo.get("forkCount", 0),
-                issues_count=repo.get("issues", {}).get("totalCount", 0),
-                pull_requests_count=repo.get("pullRequests", {}).get("totalCount", 0),
-                commits_count=(
-                    repo.get("defaultBranchRef", {})
-                    .get("target", {})
-                    .get("history", {})
-                    .get("totalCount", 0)
-                    if repo.get("defaultBranchRef")
-                    and repo.get("defaultBranchRef", {}).get("target")
-                    else 0
-                ),
-                primary_language=(
-                    repo.get("primaryLanguage", {}).get("name")
-                    if repo.get("primaryLanguage")
-                    else None
-                ),
-            )
-            repo_models.append(repo_model)
-
-        # Create complete GitHubStats model
-        return GitHubStats(
-            user=user,
-            stats=stats,
-            github_languages=user_profile.github_languages,
-            account_age_years=user_profile.account_age,
-            repositories=repo_models,
-        )
-
-    def _transform_graphql_user_data(self, user_data: dict) -> dict:
-        """Transform GraphQL user data to match expected format."""
-        repos_data = user_data.get("repositories", {}).get("nodes", [])
-        total_repos = user_data.get("repositories", {}).get(
-            "totalCount", len(repos_data)
-        )
-
-        return {
-            "login": user_data.get("login"),
-            "name": user_data.get("name"),
-            "bio": user_data.get("bio"),
-            "location": user_data.get("location"),
-            "company": user_data.get("company"),
-            "blog": user_data.get("websiteUrl"),
-            "public_repos": total_repos,
-            "public_gists": user_data.get("gists", {}).get("totalCount", 0),
-            "followers": user_data.get("followers", {}).get("totalCount", 0),
-            "following": user_data.get("following", {}).get("totalCount", 0),
-            "created_at": user_data.get("createdAt"),
-            "avatar_url": user_data.get("avatarUrl"),
-            "repositories": repos_data,
+    async def _make_graphql_request(
+        self, query: str, variables: Dict[str, Any] = None
+    ) -> Dict[str, Any]:
+        """Make a GraphQL request to GitHub API"""
+        payload = {"query": query, "variables": variables or {}}
+        headers = {
+            "Authorization": f"Bearer {self.github_token}",
+            "Content-Type": "application/json",
         }
 
-    def _calculate_repo_stats(self, repos_data: list) -> CalculatedStats:
-        """Calculate repository statistics from GraphQL data, separating public and private repos.
-
-        Args:
-            repos_data (list): List of repository data dictionaries from GraphQL
-
-        Returns:
-            CalculatedStats: Dataclass containing all calculated statistics
-        """
         try:
-            # Separate public and private repositories
-            public_repos = [
-                repo for repo in repos_data if not repo.get("isPrivate", False)
-            ]
-            private_repos = [
-                repo for repo in repos_data if repo.get("isPrivate", False)
-            ]
-
-            # Calculate totals
-            total_stars = sum(repo.get("stargazerCount", 0) for repo in repos_data)
-            total_forks = sum(repo.get("forkCount", 0) for repo in repos_data)
-            total_issues = sum(
-                repo.get("issues", {}).get("totalCount", 0) for repo in repos_data
-            )
-            total_pulls = sum(
-                repo.get("pullRequests", {}).get("totalCount", 0) for repo in repos_data
-            )
-            total_commits = sum(
-                (
-                    repo.get("defaultBranchRef", {})
-                    .get("target", {})
-                    .get("history", {})
-                    .get("totalCount", 0)
-                    if repo.get("defaultBranchRef")
-                    and repo.get("defaultBranchRef", {}).get("target")
-                    else 0
-                )
-                for repo in repos_data
-            )
-
-            # Calculate public repo stats
-            public_stars = sum(repo.get("stargazerCount", 0) for repo in public_repos)
-            public_forks = sum(repo.get("forkCount", 0) for repo in public_repos)
-            public_issues = sum(
-                repo.get("issues", {}).get("totalCount", 0) for repo in public_repos
-            )
-            public_pulls = sum(
-                repo.get("pullRequests", {}).get("totalCount", 0)
-                for repo in public_repos
-            )
-            public_commits = sum(
-                (
-                    repo.get("defaultBranchRef", {})
-                    .get("target", {})
-                    .get("history", {})
-                    .get("totalCount", 0)
-                    if repo.get("defaultBranchRef")
-                    and repo.get("defaultBranchRef", {}).get("target")
-                    else 0
-                )
-                for repo in public_repos
-            )
-
-            # Calculate private repo stats
-            private_stars = sum(repo.get("stargazerCount", 0) for repo in private_repos)
-            private_forks = sum(repo.get("forkCount", 0) for repo in private_repos)
-            private_issues = sum(
-                repo.get("issues", {}).get("totalCount", 0) for repo in private_repos
-            )
-            private_pulls = sum(
-                repo.get("pullRequests", {}).get("totalCount", 0)
-                for repo in private_repos
-            )
-            private_commits = sum(
-                (
-                    repo.get("defaultBranchRef", {})
-                    .get("target", {})
-                    .get("history", {})
-                    .get("totalCount", 0)
-                    if repo.get("defaultBranchRef")
-                    and repo.get("defaultBranchRef", {}).get("target")
-                    else 0
-                )
-                for repo in private_repos
-            )
-
-            return CalculatedStats(
-                total_stars=total_stars,
-                total_forks=total_forks,
-                total_issues=total_issues,
-                total_pulls=total_pulls,
-                total_commits=total_commits,
-                public_repos=len(public_repos),
-                private_repos=len(private_repos),
-                public_stars=public_stars,
-                private_stars=private_stars,
-                public_forks=public_forks,
-                private_forks=private_forks,
-                public_issues=public_issues,
-                private_issues=private_issues,
-                public_pulls=public_pulls,
-                private_pulls=private_pulls,
-                public_commits=public_commits,
-                private_commits=private_commits,
-            )
-        except Exception as e:
-            print(f"Error calculating repo stats: {e}")
-            return CalculatedStats(
-                total_stars=0,
-                total_forks=0,
-                total_issues=0,
-                total_pulls=0,
-                total_commits=0,
-                public_repos=0,
-                private_repos=0,
-                public_stars=0,
-                private_stars=0,
-                public_forks=0,
-                private_forks=0,
-                public_issues=0,
-                private_issues=0,
-                public_pulls=0,
-                private_pulls=0,
-                public_commits=0,
-                private_commits=0,
-            )
-
-    def _extract_languages(self, repos_data: list, top_n: int = 5) -> list[str]:
-        """Extract and rank programming languages from GraphQL repository data.
-
-        Args:
-            repos_data (list): List of repository data dictionaries from GraphQL
-            top_n (int, optional): Number of top languages to return. Defaults to 5.
-
-        Returns:
-            list[str]: List of top programming languages by frequency
-        """
-        try:
-            github_languages = {}
-            for repo in repos_data:
-                # GraphQL returns language in primaryLanguage.name
-                lang_data = repo.get("primaryLanguage")
-                if lang_data and lang_data.get("name"):
-                    lang = lang_data["name"]
-                    github_languages[lang] = github_languages.get(lang, 0) + 1
-            # Sort by frequency and get top languages
-            github_top_langs = sorted(
-                github_languages.items(), key=lambda x: x[1], reverse=True
-            )[:top_n]
-            return [lang[0] for lang in github_top_langs]
-        except Exception as e:
-            print(f"Error extracting languages: {e}")
-            return []
-
-    def _calculate_account_age(self, user_data: dict) -> int:
-        """Calculate account age in years.
-
-        Args:
-            user_data (dict): User profile data from GitHub API
-
-        Returns:
-            int: Account age in years
-        """
-        try:
-            created_at = user_data.get("created_at", "2020-01-01")
-            created_date = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-            return datetime.now().year - created_date.year
-        except Exception as e:
-            print(f"Error calculating account age: {e}")
-            return 0
-
-    async def get_github_stats(self) -> Optional[GitHubStats]:
-        """Fetch comprehensive GitHub statistics for a user.
-
-        This method orchestrates the fetching and processing of GitHub user data,
-        including profile information, repository statistics, and programming
-        language analysis.
-
-        Args:
-            session (aiohttp.ClientSession): HTTP session for async requests
-
-        Returns:
-            dict | None: Comprehensive user profile with GitHub statistics,
-                        or None if an error occurs during fetching
-
-        Example:
-            >>> downloader = GitHubStatsService("octocat")
-            >>> stats = downloader.get_github_stats()
-            >>> print(stats["followers"])
-            20349
-
-        Note:
-            This method makes multiple API calls to GitHub and may take some time
-            to complete depending on the number of repositories.
-        """
-        try:
-            # Fetch data using GraphQL (user + repos in one request)
             async with aiohttp.ClientSession() as session:
-                user_data = await self._fetch_user_data(session)
+                async with session.post(
+                    self.graphql_url, headers=headers, json=payload
+                ) as response:
+                    data = await response.json()
 
-                # Check if we got valid data
-                if not user_data:
-                    print("Failed to fetch user data")
-                    return None
+                    if "errors" in data:
+                        print(f"GraphQL Errors: {data['errors']}")
+                        return {}
 
-                # Extract repositories from user data
-                repos_data = user_data.get("repositories", [])
-                if not repos_data:
-                    print("No repositories found")
-                    repos_data = []
+                    if response.status != 200:
+                        print(f"HTTP Error: {response.status}")
+                        return {}
 
-                # Calculate statistics
-                calculated_stats = self._calculate_repo_stats(repos_data)
-                github_languages = self._extract_languages(repos_data)
-                account_age = self._calculate_account_age(user_data)
-
-                # Create user profile data
-                user_profile = UserProfileData(
-                    user_data=user_data,
-                    github_languages=github_languages,
-                    account_age=account_age,
-                    repositories=repos_data,
-                )
-
-                return self._build_github_stats_model(
-                    user_profile=user_profile,
-                    calculated_stats=calculated_stats,
-                )
-
+                    return data.get("data", {})
         except Exception as e:
-            print(f"Error fetching GitHub stats: {e}")
-            return None
+            print(f"Exception during API call: {e}")
+            return {}
+
+    def _format_user_info(self, user: Dict[str, Any]) -> Dict[str, Any]:
+        """Format user information"""
+        return {
+            "username": user.get("login"),
+            "name": user.get("name"),
+            "bio": user.get("bio"),
+            "followers": user.get("followers", {}).get("totalCount", 0),
+            "following": user.get("following", {}).get("totalCount", 0),
+            "created_at": user.get("createdAt"),
+            "updated_at": user.get("updatedAt"),
+        }
+
+    def _format_repository_stats(self, repos: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Format repository statistics"""
+        public_repos = [repo for repo in repos if not repo.get("isPrivate", False)]
+        private_repos = [repo for repo in repos if repo.get("isPrivate", False)]
+        forks = [repo for repo in repos if repo.get("isFork", False)]
+
+        languages = {}
+        for repo in repos:
+            primary_language = repo.get("primaryLanguage")
+            if primary_language and (language := primary_language.get("name")):
+                languages[language] = languages.get(language, 0) + 1
+
+        return {
+            "total_repos": len(repos),
+            "public_repos": len(public_repos),
+            "private_repos": len(private_repos),
+            "forks": len(forks),
+            "original_repos": len(repos) - len(forks),
+            "total_stars": sum(repo.get("stargazerCount", 0) for repo in repos),
+            "total_forks": sum(repo.get("forkCount", 0) for repo in repos),
+            "languages": dict(sorted(languages.items(), key=lambda item: -item[1])),
+            "most_starred_repo": (
+                max(repos, key=lambda repo: repo.get("stargazerCount", 0))
+                if repos and any(repo.get("stargazerCount", 0) > 0 for repo in repos)
+                else None
+            ),
+        }
+
+    def _format_contribution_stats(
+        self, contributions_collection: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Format contribution statistics"""
+        contribution_calendar = contributions_collection.get("contributionCalendar", {})
+        weeks = contribution_calendar.get("weeks", [])
+
+        current_streak, longest_streak = self._calculate_streaks(weeks)
+
+        return {
+            "total_commit_contributions": contributions_collection.get(
+                "totalCommitContributions", 0
+            ),
+            "total_issue_contributions": contributions_collection.get(
+                "totalIssueContributions", 0
+            ),
+            "total_pr_contributions": contributions_collection.get(
+                "totalPullRequestContributions", 0
+            ),
+            "total_pr_review_contributions": contributions_collection.get(
+                "totalPullRequestReviewContributions", 0
+            ),
+            "total_contributions": contribution_calendar.get("totalContributions", 0),
+            "current_streak": current_streak,
+            "longest_streak": longest_streak,
+        }
+
+    def _calculate_streaks(self, weeks: List[Dict[str, Any]]) -> tuple[int, int]:
+        """Calculate current and longest contribution streaks"""
+        current_streak = 0
+        longest_streak = 0
+        temp_streak = 0
+        today = datetime.now(timezone.utc).date()
+
+        all_days = []
+        for week in weeks:
+            for day in week.get("contributionDays", []):
+                if date_str := day.get("date"):
+                    all_days.append(
+                        (
+                            datetime.fromisoformat(date_str).date(),
+                            day.get("contributionCount", 0),
+                        )
+                    )
+
+        all_days.sort(key=lambda day: day[0])
+
+        for day_date, count in all_days:
+            if count > 0:
+                temp_streak += 1
+                longest_streak = max(longest_streak, temp_streak)
+
+                if day_date <= today:
+                    current_streak = temp_streak
+            else:
+                temp_streak = 0
+                if day_date <= today:
+                    current_streak = 0
+
+        return current_streak, longest_streak
+
+    async def _fetch_all_repositories(
+        self,
+        username: str,
+        initial_repos: List[Dict[str, Any]],
+        page_info: Dict[str, Any],
+    ) -> List[Dict[str, Any]]:
+        """Fetch all repositories using pagination"""
+        all_repos = initial_repos.copy()
+        cursor = page_info.get("endCursor")
+        has_next_page = page_info.get("hasNextPage", False)
+
+        while has_next_page and cursor:
+            graphql_data = await self._make_graphql_request(
+                REPOSITORIES_PAGINATION_QUERY, {"username": username, "after": cursor}
+            )
+
+            if not graphql_data or "user" not in graphql_data:
+                break
+
+            user = graphql_data.get("user", {})
+            repos_data = user.get("repositories", {})
+            repos = repos_data.get("nodes", [])
+            page_info = repos_data.get("pageInfo", {})
+
+            all_repos.extend(repos)
+            cursor = page_info.get("endCursor")
+            has_next_page = page_info.get("hasNextPage", False)
+
+        return all_repos
+
+    async def get_github_stats(self, username: str) -> Dict[str, Any]:
+        try:
+            """Get comprehensive GitHub statistics for a user"""
+            graphql_data = await self._make_graphql_request(
+                USER_STATS_QUERY, {"username": username}
+            )
+
+            if not graphql_data or "user" not in graphql_data:
+                print("No data returned from GitHub API")
+                return {}
+
+            user = graphql_data.get("user")
+            if not user:
+                print("User data not found in API response")
+                return {}
+
+            repos_data = user.get("repositories", {})
+            initial_repos = repos_data.get("nodes", [])
+            page_info = repos_data.get("pageInfo", {})
+
+            repos = await self._fetch_all_repositories(
+                username, initial_repos, page_info
+            )
+
+            contributions_collection = user.get("contributionsCollection", {})
+
+            result = {
+                "user_info": self._format_user_info(user),
+                "repository_stats": self._format_repository_stats(repos),
+                "contribution_stats": self._format_contribution_stats(
+                    contributions_collection
+                ),
+            }
+            print(json.dumps(result, indent=2))
+            return result
+        except Exception as e:
+            print(f"Error getting GitHub stats: {e}")
+            return {}
+
+
+if __name__ == "__main__":
+    github_token = ""
+    test_github = GitHubStatsService(github_token)
+    asyncio.run(test_github.get_github_stats("Rishika-dev"))

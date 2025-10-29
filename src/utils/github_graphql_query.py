@@ -4,71 +4,73 @@ GitHub GraphQL Queries
 This module contains all GraphQL queries used for fetching GitHub user data.
 """
 
-# Query to fetch user profile data
-USER_PROFILE_QUERY = """
+# Query to fetch comprehensive user stats
+USER_STATS_QUERY = """
 query($username: String!) {
-    user(login: $username) {
-        login
+  user(login: $username) {
+    login
+    name
+    bio
+    followers { totalCount }
+    following { totalCount }
+    createdAt
+    updatedAt
+    repositories(first: 100, ownerAffiliations: OWNER, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      totalCount
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      nodes {
         name
-        bio
-        location
-        company
-        websiteUrl
-        gists {
-            totalCount
-        }
-        followers {
-            totalCount
-        }
-        following {
-            totalCount
-        }
+        isPrivate
+        isFork
+        stargazerCount
+        forkCount
+        primaryLanguage { name }
         createdAt
-        avatarUrl
-        repositories {
-            totalCount
-        }
+        updatedAt
+      }
     }
+    contributionsCollection {
+      totalCommitContributions
+      totalIssueContributions
+      totalPullRequestContributions
+      totalPullRequestReviewContributions
+      contributionCalendar {
+        totalContributions
+        weeks {
+          contributionDays {
+            date
+            contributionCount
+          }
+        }
+      }
+    }
+  }
 }
 """
 
-# Query to fetch repositories with pagination
-REPOSITORIES_QUERY = """
-query($username: String!, $after: String, $first: Int!) {
-    user(login: $username) {
-        repositories(first: $first, after: $after, orderBy: {field: UPDATED_AT, direction: DESC}) {
-            pageInfo {
-                hasNextPage
-                endCursor
-            }
-            nodes {
-                name
-                isPrivate
-                stargazerCount
-                forkCount
-                issues {
-                    totalCount
-                }
-                pullRequests {
-                    totalCount
-                }
-                defaultBranchRef {
-                    target {
-                        ... on Commit {
-                            history {
-                                totalCount
-                            }
-                        }
-                    }
-                }
-                primaryLanguage {
-                    name
-                }
-            }
-        }
+# Query to fetch additional repositories with pagination
+REPOSITORIES_PAGINATION_QUERY = """
+query($username: String!, $after: String) {
+  user(login: $username) {
+    repositories(first: 100, after: $after, ownerAffiliations: OWNER, orderBy: {field: UPDATED_AT, direction: DESC}) {
+      pageInfo {
+        hasNextPage
+        endCursor
+      }
+      nodes {
+        name
+        isPrivate
+        isFork
+        stargazerCount
+        forkCount
+        primaryLanguage { name }
+        createdAt
+        updatedAt
+      }
     }
+  }
 }
 """
-
-# GraphQL endpoint URL
-GITHUB_GRAPHQL_ENDPOINT = "https://api.github.com/graphql"
