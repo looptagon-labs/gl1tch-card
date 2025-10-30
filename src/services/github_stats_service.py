@@ -1,5 +1,5 @@
 import aiohttp
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 import json
 import asyncio
@@ -12,7 +12,10 @@ class GitHubStatsService:
         self.graphql_url = "https://api.github.com/graphql"
 
     async def _make_graphql_request(
-        self, query: str, variables: Dict[str, Any] = None
+        self,
+        query: str,
+        variables: Optional[Dict[str, Any]] = None,
+        session: Optional[aiohttp.ClientSession] = None,
     ) -> Dict[str, Any]:
         """Make a GraphQL request to GitHub API"""
         payload = {"query": query, "variables": variables or {}}
@@ -22,21 +25,24 @@ class GitHubStatsService:
         }
 
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
+
+            async def _post(s: aiohttp.ClientSession) -> Dict[str, Any]:
+                async with s.post(
                     self.graphql_url, headers=headers, json=payload
                 ) as response:
                     data = await response.json()
-
                     if "errors" in data:
                         print(f"GraphQL Errors: {data['errors']}")
                         return {}
-
                     if response.status != 200:
                         print(f"HTTP Error: {response.status}")
                         return {}
-
                     return data.get("data", {})
+
+            if session is None:
+                async with aiohttp.ClientSession() as temp_session:
+                    return await _post(temp_session)
+            return await _post(session)
         except Exception as e:
             print(f"Exception during API call: {e}")
             return {}
@@ -147,6 +153,7 @@ class GitHubStatsService:
         username: str,
         initial_repos: List[Dict[str, Any]],
         page_info: Dict[str, Any],
+        session: aiohttp.ClientSession,
     ) -> List[Dict[str, Any]]:
         """Fetch all repositories using pagination"""
         all_repos = initial_repos.copy()
@@ -155,7 +162,9 @@ class GitHubStatsService:
 
         while has_next_page and cursor:
             graphql_data = await self._make_graphql_request(
-                REPOSITORIES_PAGINATION_QUERY, {"username": username, "after": cursor}
+                REPOSITORIES_PAGINATION_QUERY,
+                {"username": username, "after": cursor},
+                session=session,
             )
 
             if not graphql_data or "user" not in graphql_data:
@@ -175,38 +184,39 @@ class GitHubStatsService:
     async def get_github_stats(self, username: str) -> Dict[str, Any]:
         try:
             """Get comprehensive GitHub statistics for a user"""
-            graphql_data = await self._make_graphql_request(
-                USER_STATS_QUERY, {"username": username}
-            )
+            async with aiohttp.ClientSession() as session:
+                graphql_data = await self._make_graphql_request(
+                    USER_STATS_QUERY, {"username": username}, session=session
+                )
 
-            if not graphql_data or "user" not in graphql_data:
-                print("No data returned from GitHub API")
-                return {}
+                if not graphql_data or "user" not in graphql_data:
+                    print("No data returned from GitHub API")
+                    return {}
 
-            user = graphql_data.get("user")
-            if not user:
-                print("User data not found in API response")
-                return {}
+                user = graphql_data.get("user")
+                if not user:
+                    print("User data not found in API response")
+                    return {}
 
-            repos_data = user.get("repositories", {})
-            initial_repos = repos_data.get("nodes", [])
-            page_info = repos_data.get("pageInfo", {})
+                repos_data = user.get("repositories", {})
+                initial_repos = repos_data.get("nodes", [])
+                page_info = repos_data.get("pageInfo", {})
 
-            repos = await self._fetch_all_repositories(
-                username, initial_repos, page_info
-            )
+                repos = await self._fetch_all_repositories(
+                    username, initial_repos, page_info, session=session
+                )
 
-            contributions_collection = user.get("contributionsCollection", {})
+                contributions_collection = user.get("contributionsCollection", {})
 
-            result = {
-                "user_info": self._format_user_info(user),
-                "repository_stats": self._format_repository_stats(repos),
-                "contribution_stats": self._format_contribution_stats(
-                    contributions_collection
-                ),
-            }
-            print(json.dumps(result, indent=2))
-            return result
+                result = {
+                    "user_info": self._format_user_info(user),
+                    "repository_stats": self._format_repository_stats(repos),
+                    "contribution_stats": self._format_contribution_stats(
+                        contributions_collection
+                    ),
+                }
+                print(json.dumps(result, indent=2))
+                return result
         except Exception as e:
             print(f"Error getting GitHub stats: {e}")
             return {}
