@@ -12,12 +12,19 @@ class ThemeService:
 
     async def fetch_theme_data(self):
         """Fetch theme YAML data from Gogh repository and parse it."""
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                f"https://raw.githubusercontent.com/Gogh-Co/Gogh/master/themes/{self.theme_name}.yml"
-            ) as response:
-                theme_data = await response.text()
-                return yaml.safe_load(theme_data)
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"https://raw.githubusercontent.com/Gogh-Co/Gogh/master/themes/{self.theme_name}.yml"
+                ) as response:
+                    if response.status != 200:
+                        raise Exception(
+                            f"Failed to fetch theme from Gogh repository: {response.status}"
+                        )
+                    theme_data = await response.text()
+                    return yaml.safe_load(theme_data)
+        except Exception as e:
+            print(f"Failed to parse theme: {e}")
 
 
 if __name__ == "__main__":
