@@ -1,7 +1,7 @@
 import json
 import aiohttp
 import asyncio
-from ..models.wakatime_stats_model import WakaStatsResponse, WakaDayData, AllTimeStats
+from models.wakatime_stats_model import WakaStatsResponse, WakaDayData, AllTimeStats
 
 
 class WakaTimeStatsService:

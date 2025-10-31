@@ -14,7 +14,7 @@ class GithubService:
         self.user = self.gh.get_user()
 
     def get_user(self):
-        return self.user
+        return self.user.login
 
     def update_readme(self, gif_path: str):
         try:

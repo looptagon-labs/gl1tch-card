@@ -3,7 +3,7 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime, timezone
 import json
 import asyncio
-from ..utils.github_graphql_query import USER_STATS_QUERY, REPOSITORIES_PAGINATION_QUERY
+from utils.github_graphql_query import USER_STATS_QUERY, REPOSITORIES_PAGINATION_QUERY
 
 
 class GitHubStatsService:
@@ -30,6 +30,7 @@ class GitHubStatsService:
                 async with s.post(
                     self.graphql_url, headers=headers, json=payload
                 ) as response:
+                    print(response)
                     data = await response.json()
                     if "errors" in data:
                         print(f"GraphQL Errors: {data['errors']}")

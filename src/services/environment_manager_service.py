@@ -1,12 +1,15 @@
 from os import getenv, environ
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 class EnvironmentManagerService:
     """
     Service class for managing environment variables and configuration settings.
 
-    This class handles the retrieval and validation of environment variables
-    used throughout the application.
+    - Loads a local .env when available (optional dependency on python-dotenv)
+    - Prefers GitHub Actions input names (INPUT_*) with sensible local fallbacks
     """
 
     # List of string values that should be considered as "true" for boolean parsing

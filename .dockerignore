@@ -1,0 +1,64 @@
+# VCS
+.git
+.gitignore
+.gitattributes
+
+# Python caches and build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.dylib
+*.egg-info/
+.eggs/
+.Python
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Packaging / build
+pip-wheel-metadata/
+build/
+dist/
+
+# Testing / tooling caches
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pytype/
+.cache/
+
+# IDE/editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Node (if present)
+node_modules/
+
+# CI/docs/examples not needed in image
+.github/
+docs/
+examples/
+tests/
+
+# Misc
+*.bak
+*.orig
+action.yml
+
