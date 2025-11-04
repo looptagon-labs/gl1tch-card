@@ -26,7 +26,8 @@ class GithubService:
                 raise FileNotFoundError(f"GIF not found: {source_gif}")
 
             login = self.user.login
-            repo_full_name = f"{login}/{login}"
+            # repo_full_name = f"{login}/{login}"
+            repo_full_name = f"{login}/test-hello-action"
 
             repo_url = f"https://{self.github_token}@github.com/{repo_full_name}.git"
 
@@ -45,14 +46,14 @@ class GithubService:
                 try:
                     readme = self.gh.get_repo(repo_full_name).get_readme()
                     readme_path = os.path.join(clone_dir, readme.path)
-                    print(readme_path)
+                    # print(readme_path)
                 except Exception as e:
                     print(f"Error getting readme: {e}")
                     exit(1)
                 try:
                     with open(readme_path, "r") as f:
                         readme_content = f.read()
-                    print(readme_content)
+                    # print(readme_content)
                 except Exception as e:
                     print(f"Error getting readme content: {e}")
                     exit(1)

@@ -124,8 +124,10 @@ class WakaTimeStatsService:
             "weekly_stats": self._formatter(week_time.data),
             "all_time_stats": self._formatter(all_time.data),
         }
-        print(json.dumps(result, indent=2))
-
+        # print(json.dumps(result, indent=2))
+        # save the result to a json file
+        with open("wakatime_stats.json", "w") as f:
+            json.dump(result, f)
         return result
 
 

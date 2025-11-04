@@ -30,7 +30,7 @@ class GitHubStatsService:
                 async with s.post(
                     self.graphql_url, headers=headers, json=payload
                 ) as response:
-                    print(response)
+                    # print(response)
                     data = await response.json()
                     if "errors" in data:
                         print(f"GraphQL Errors: {data['errors']}")
@@ -216,7 +216,10 @@ class GitHubStatsService:
                         contributions_collection
                     ),
                 }
-                print(json.dumps(result, indent=2))
+                # print(json.dumps(result, indent=2))
+                # save the result to a json file
+                with open("github_stats.json", "w") as f:
+                    json.dump(result, f)
                 return result
         except Exception as e:
             print(f"Error getting GitHub stats: {e}")

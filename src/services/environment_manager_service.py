@@ -39,3 +39,4 @@ class EnvironmentManagerService:
         getenv("INPUT_SHOW_LANGUAGE", "True").lower() in _TRUTHY
     )  # Show language breakdown
     SHOW_LINES_OF_CODE = getenv("INPUT_SHOW_LINES_OF_CODE", "False").lower() in _TRUTHY
+    SHOW_AVATAR = getenv("INPUT_SHOW_AVATAR", "True").lower() in _TRUTHY

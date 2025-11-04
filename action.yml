@@ -29,6 +29,12 @@ inputs:
     required: false
     default: 'Aco'
 
+
+  SHOW_AVATAR:
+    required: false
+    description: 'Show the avatar in the card'
+    default: "True"
+
   SHOW_EDITORS:
     required: false
     description: 'Show the Editors used in dev metrics'
