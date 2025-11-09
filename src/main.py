@@ -40,7 +40,7 @@ async def main():
     card_generator = CardGeneratorService(
         github_stats_data, wakatime_stats_data, theme_data
     )
-    await card_generator.generate_card("output/card.gif")
+    await card_generator.generate_card()
     github.update_readme("output/card.gif")
 
     end_time = time.time()

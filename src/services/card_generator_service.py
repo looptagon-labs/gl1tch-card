@@ -11,15 +11,12 @@ import tqdm as tqdm_lib
 from tqdm import tqdm
 
 from utils.image_to_ascii import image_to_ascii
-from services.environment_manager_service import EnvironmentManagerService
-
-env = EnvironmentManagerService()
 
 
 @dataclass(frozen=True)
 class CardAnimationConfig:
     chars_per_frame: int = 3
-    frame_duration_ms: int = 70
+    frame_duration_ms: int = 20
     cursor_blink_period: int = 6
     final_hold_seconds: float = 2.0
     max_render_workers: int = 8
@@ -27,6 +24,7 @@ class CardAnimationConfig:
     avatar_width: int = 60
     font_size: int = 22
     line_spacing: int = 4
+    column_gap: int = 4
     font_paths: Sequence[str] = (
         "assets/fonts/JetBrainsMono-Regular.ttf",
         "consola.ttf",
@@ -34,6 +32,13 @@ class CardAnimationConfig:
         "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
     )
     palette_optimization: bool = False
+
+
+@dataclass(frozen=True)
+class StyledSegment:
+    text: str
+    color: str
+    preserve_trailing: bool = False
 
 
 @dataclass(frozen=True)
@@ -81,14 +86,14 @@ class CardGeneratorService:
         }
 
         self.card_width = 1080
-        self.card_height = 1920
-        self.padding = 48
+        self.card_height = 700
+        self.padding = 20
         self.font_size = self.animation_config.font_size
         self.char_width = 12
         self.char_height = 28
         self.line_height = self.char_height + self.animation_config.line_spacing
 
-        self.colored_lines: List[List[Tuple[str, str]]] = []
+        self.colored_lines: List[List[StyledSegment]] = []
         self.char_stream: List[Tuple[str, str]] = []
         self.glyphs: List[Glyph] = []
         self.cursor_positions: List[Tuple[int, int]] = []
@@ -159,20 +164,10 @@ class CardGeneratorService:
 
         self.colored_lines = []
 
-        name = user_info.get("name") or user_info.get("username") or "User"
-        header = f"{name}@gl1tch-card:~$ whoami"
-        self._add_line([(header, self.color_scheme["header"])])
-        self._add_line([(len(header) * "-", self.color_scheme["separator"])])
-        # self._add_blank_line()
-
         username = user_info.get("username")
-        avatar_lines: Iterable[str] = []
-        line_capacity_chars = max(
-            1,
-            (self.card_width - 2 * self.padding) // max(1, self.char_width),
-        )
+        avatar_lines: List[str] = []
 
-        if username and env.SHOW_AVATAR:
+        if username:
             avatar_raw = image_to_ascii(
                 f"https://github.com/{username}.png",
                 height=config.avatar_height,
@@ -180,146 +175,217 @@ class CardGeneratorService:
             )
             avatar_lines = avatar_raw.splitlines() if avatar_raw else []
 
-        for avatar_line in avatar_lines:
-            trimmed = avatar_line.rstrip(" ")
-            if not trimmed:
-                self._add_line([("", self.color_scheme["avatar"])])
-                continue
+        avatar_lines = [line.rstrip(" ") for line in avatar_lines]
+        ascii_width = max((len(line) for line in avatar_lines), default=0)
 
-            content_width = len(trimmed)
-            offset_spaces = max(0, (line_capacity_chars - content_width) // 2)
-            centered_line = (" " * offset_spaces) + trimmed
-            self._add_line([(centered_line, self.color_scheme["avatar"])])
+        info_lines: List[List[StyledSegment]] = []
 
-        # self._add_blank_line()
+        name = user_info.get("name") or user_info.get("username") or "User"
+        header = f"{name}@gl1tch-card"
+        self._append_line([(header, self.color_scheme["header"])], info_lines)
+        self._append_line(
+            [(len(header) * "-", self.color_scheme["separator"])], info_lines
+        )
+        self._add_blank_line(info_lines)
 
         # About section
-        self._add_section_header("[IDENTITY]")
-        name = user_info.get("name", None)
-        if name:
-            self._add_kv_line("user", name)
-        else:
-            self._add_kv_line("user", username)
-
-        if env.FIELD_BIO:
-            self._add_kv_line("About", env.FIELD_BIO)
-
-        if env.FIELD_EMAIL:
-            self._add_kv_line("Email", env.FIELD_EMAIL)
-
-        if env.FIELD_WEBSITE:
-            self._add_kv_line("Website", env.FIELD_WEBSITE)
-
-        self._add_kv_line("Followers", user_info.get("followers", 0))
-        self._add_kv_line("Following", user_info.get("following", 0))
-        self._add_blank_line()
-
-        self._add_section_header("[SYSTEM]")
-        self._add_kv_line("Kernel", weekly_stats.get("operating_system", "Unknown"))
-        self._add_kv_line("Editor", weekly_stats.get("editor", "Unknown"))
-        self._add_kv_line("Timezone", weekly_stats.get("timezone", "Unknown"))
+        self._add_section_header("About Me:", info_lines)
+        self._add_kv_line(
+            "Bio",
+            user_info.get("bio") or "Full-stack developer passionate about open source",
+            info_lines,
+        )
+        self._add_kv_line(
+            "Location", user_info.get("location", "San Francisco, CA"), info_lines
+        )
+        self._add_kv_line("Followers", user_info.get("followers", 0), info_lines)
+        self._add_kv_line("Following", user_info.get("following", 0), info_lines)
+        self._add_blank_line(info_lines)
 
         # Work section (synthetic placeholders if missing)
-        self._add_section_header("Work Information:")
-        self._add_kv_line("Current Company", user_info.get("company", "Tech Corp Inc"))
+        self._add_section_header("Work Information:", info_lines)
         self._add_kv_line(
-            "Designation", user_info.get("designation", "Senior Software Engineer")
+            "Current Company", user_info.get("company", "Tech Corp Inc"), info_lines
         )
-        self._add_kv_line("Current Experience", repo_stats.get("total_repos", 0))
+        self._add_kv_line(
+            "Designation",
+            user_info.get("designation", "Senior Software Engineer"),
+            info_lines,
+        )
+        self._add_kv_line(
+            "Current Experience", repo_stats.get("total_repos", 0), info_lines
+        )
         self._add_kv_line(
             "Total Experience",
             repo_stats.get("public_repos", 0) + repo_stats.get("private_repos", 0),
+            info_lines,
         )
-        self._add_kv_line("Achievements", "Led team of 8, Improved performance by 50%")
-        self._add_blank_line()
+        self._add_kv_line(
+            "Achievements", "Led team of 8, Improved performance by 50%", info_lines
+        )
+        self._add_blank_line(info_lines)
 
-        # Contact (derived from username when available)
-        self._add_section_header("Contact Information:")
+        # Contact section
+        self._add_section_header("Contact Information:", info_lines)
         if username:
-            self._add_kv_line("GitHub", f"https://github.com/{username}")
-            self._add_kv_line("Twitter", f"@{username}")
-        self._add_blank_line()
+            self._add_kv_line("GitHub", f"https://github.com/{username}", info_lines)
+            self._add_kv_line("Twitter", f"@{username}", info_lines)
+        self._add_blank_line(info_lines)
 
         # GitHub stats
-        self._add_section_header("GitHub Stats:")
-        self._add_kv_line("Public Repos", repo_stats.get("public_repos", 0))
-        self._add_kv_line("Private Repos", repo_stats.get("private_repos", 0))
-        self._add_kv_line("Total Stars", repo_stats.get("total_stars", 0))
-        self._add_kv_line("Total Forks", repo_stats.get("total_forks", 0))
-        self._add_kv_line("Commits", contrib_stats.get("total_commit_contributions", 0))
+        self._add_section_header("GitHub Stats:", info_lines)
+        self._add_kv_line("Public Repos", repo_stats.get("public_repos", 0), info_lines)
+        self._add_kv_line(
+            "Private Repos", repo_stats.get("private_repos", 0), info_lines
+        )
+        self._add_kv_line("Total Stars", repo_stats.get("total_stars", 0), info_lines)
+        self._add_kv_line("Total Forks", repo_stats.get("total_forks", 0), info_lines)
+        self._add_kv_line(
+            "Commits", contrib_stats.get("total_commit_contributions", 0), info_lines
+        )
         top_languages = repo_stats.get("languages", {})
         if top_languages:
             lang_str = ", ".join(
                 f"{lang} ({count})" for lang, count in list(top_languages.items())[:5]
             )
-            self._add_kv_line("Languages", lang_str)
+            self._add_kv_line("Languages", lang_str, info_lines)
         if repo_stats.get("most_starred_repo"):
             repo = repo_stats["most_starred_repo"]
             self._add_kv_line(
                 "Top Repo",
                 f"{repo.get('name', 'N/A')} ({repo.get('stargazerCount', 0)}★)",
+                info_lines,
             )
-        self._add_blank_line()
+        self._add_blank_line(info_lines)
 
         # WakaTime stats
-        self._add_section_header("Time Distribution:")
-        self._add_kv_line("Timezone", weekly_stats.get("timezone", "UTC"))
+        self._add_section_header("Time Distribution:", info_lines)
+        self._add_kv_line("Timezone", weekly_stats.get("timezone", "UTC"), info_lines)
         self._add_kv_line(
-            "Weekly Total", weekly_stats.get("total_coding_time_text", "--")
+            "Weekly Total", weekly_stats.get("total_coding_time_text", "--"), info_lines
         )
         self._add_kv_line(
             "Daily Average",
             weekly_stats.get("daily_average_time_text")
             or weekly_stats.get("daily_average_time", "--"),
+            info_lines,
         )
         self._add_kv_line(
             "All-time",
             all_time_stats.get("all_time_stats", {}).get("text", "--"),
+            info_lines,
         )
         editors = weekly_stats.get("editor") or weekly_stats.get("editors")
         if editors:
-            self._add_kv_line("Editor", editors)
+            self._add_kv_line("Editor", editors, info_lines)
         languages = weekly_stats.get("language_usage", [])
         if languages:
             language_line = ", ".join(
                 f"{lang.get('language_name')} ({lang.get('time_spent_text')})"
                 for lang in languages[:5]
             )
-            self._add_kv_line("Top Languages", language_line)
+            self._add_kv_line("Top Languages", language_line, info_lines)
         projects = weekly_stats.get("most_active_projects", [])
         if projects:
             project_line = ", ".join(proj.get("project_name") for proj in projects[:5])
-            self._add_kv_line("Projects", project_line)
+            self._add_kv_line("Projects", project_line, info_lines)
+
+        ascii_gap = " " * self.animation_config.column_gap
+        total_rows = max(len(avatar_lines), len(info_lines))
+        for row_index in range(total_rows):
+            line_segments: List[StyledSegment] = []
+
+            if ascii_width > 0:
+                ascii_text = (
+                    avatar_lines[row_index] if row_index < len(avatar_lines) else ""
+                )
+                if ascii_text:
+                    line_segments.append(
+                        StyledSegment(ascii_text, self.color_scheme["avatar"])
+                    )
+                padding = ascii_width - len(ascii_text)
+                if padding > 0:
+                    line_segments.append(
+                        StyledSegment(
+                            " " * padding,
+                            self.color_scheme["section_value"],
+                            preserve_trailing=True,
+                        )
+                    )
+                if self.animation_config.column_gap > 0:
+                    line_segments.append(
+                        StyledSegment(
+                            ascii_gap,
+                            self.color_scheme["section_value"],
+                            preserve_trailing=True,
+                        )
+                    )
+
+            if row_index < len(info_lines):
+                line_segments.extend(info_lines[row_index])
+
+            self.colored_lines.append(line_segments)
 
         self.char_stream = []
         for line in self.colored_lines:
-            for text, color in line:
+            for segment in line:
+                if not segment.text:
+                    continue
+                text = (
+                    segment.text
+                    if segment.preserve_trailing
+                    else segment.text.rstrip(" ")
+                )
                 if not text:
                     continue
-                trimmed_text = text.rstrip(" ")
-                for char in trimmed_text:
-                    self.char_stream.append((char, color))
+                for char in text:
+                    self.char_stream.append((char, segment.color))
             self.char_stream.append(("\n", self.color_scheme["section_value"]))
 
         return "".join(char for char, _ in self.char_stream)
 
     def _add_line(self, segments: Iterable[Tuple[str, str]]) -> None:
-        self.colored_lines.append(list(segments))
+        self._append_line(segments, self.colored_lines)
 
-    def _add_blank_line(self) -> None:
-        self._add_line([("", self.color_scheme["section_value"])])
+    def _append_line(
+        self,
+        segments: Iterable[Tuple[str, str] | Tuple[str, str, bool]],
+        target: List[List[StyledSegment]],
+    ) -> None:
+        line_segments: List[StyledSegment] = []
+        for segment in segments:
+            if len(segment) == 2:
+                text, color = segment  # type: ignore[misc]
+                preserve = False
+            else:
+                text, color, preserve = segment  # type: ignore[misc]
+            line_segments.append(
+                StyledSegment(text=text, color=color, preserve_trailing=preserve)
+            )
+        target.append(line_segments)
 
-    def _add_section_header(self, title: str) -> None:
-        self._add_line([(title, self.color_scheme["section_title"])])
-        self._add_line([("---", self.color_scheme["separator"])])
+    def _add_blank_line(self, target: List[List[StyledSegment]] | None = None) -> None:
+        destination = target or self.colored_lines
+        self._append_line([("", self.color_scheme["section_value"])], destination)
 
-    def _add_kv_line(self, key: str, value: object) -> None:
+    def _add_section_header(
+        self, title: str, target: List[List[StyledSegment]] | None = None
+    ) -> None:
+        destination = target or self.colored_lines
+        self._append_line([(title, self.color_scheme["section_title"])], destination)
+        self._append_line([("---", self.color_scheme["separator"])], destination)
+
+    def _add_kv_line(
+        self, key: str, value: object, target: List[List[StyledSegment]] | None = None
+    ) -> None:
+        destination = target or self.colored_lines
         text_value = "N/A" if value is None else str(value)
-        self._add_line(
+        self._append_line(
             [
                 (f"{key}: ", self.color_scheme["section_key"]),
                 (text_value, self.color_scheme["section_value"]),
-            ]
+            ],
+            destination,
         )
 
     async def _generate_frames(
